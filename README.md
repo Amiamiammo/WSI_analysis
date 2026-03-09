@@ -1,188 +1,146 @@
 # WSI Analysis — Tumor Classification from Whole Slide Images
 
-A deep learning pipeline for classifying histopathological tissue patches extracted from Whole Slide Images (WSI) as **tumoral** or **non-tumoral**. The project leverages self-supervised learning with DINO (Self-Distillation with No Labels) and Vision Transformers to extract meaningful embeddings, which are then classified using multiple downstream models (MLP, LSTM, Transformer, KNN).
+> Binary tumor detection pipeline for histopathological tissue using self-supervised Vision Transformers and multi-model downstream classification.
+
+## Overview
+
+Whole Slide Images (WSIs) in digital pathology are gigapixel-scale scans that cannot be processed directly by standard deep learning models. This project builds a complete pipeline to extract, encode, and classify tissue patches from WSIs as tumoral or non-tumoral, combining self-supervised representation learning with supervised downstream classification.
+
+The core approach uses DINO (Self-Distillation with No Labels) to train a Vision Transformer on unlabeled histopathological patches, producing rich feature embeddings without requiring manual annotation at the patch level. These embeddings are then evaluated across four downstream classifiers — MLP, LSTM, Transformer, and KNN with PCA — to benchmark which architecture best separates tumoral from healthy tissue. A parallel ResNet50 feature extraction path provides a CNN baseline for direct comparison against the ViT-based representations.
+
+The pipeline also includes interpretability tools: DINO self-attention maps highlight tissue regions the model considers salient, and UMAP projections visualize how well the learned embedding space separates the two classes. An additional transfer learning evaluation on the CRC-100K colorectal cancer dataset tests whether the learned representations generalize beyond the original WSI source.
 
 ## Architecture
 
 ```mermaid
-graph TD
-    WSI["🔬 Whole Slide Images"]
-    XML["📄 XML Annotations"]
-    GeoJSON["🗺️ GeoJSON Annotations"]
-    Patches["🧩 Extracted Patches"]
-
-    WSI -->|Patch Extraction| Patches
-    XML -->|Conversion| GeoJSON
+graph LR
+    WSI[WSI Slides] -->|Patch Extraction| Patches[256x256 Patches]
+    XML[XML Annotations] -->|Conversion| GeoJSON[GeoJSON Labels]
     GeoJSON -->|Labeling| Patches
 
-    subgraph Feature Extraction
-        DINO["🧠 DINO ViT\n(Self-Supervised)"]
-        ResNet["🧠 ResNet50\n(Pre-trained)"]
-    end
+    Patches --> DINO[DINO ViT-Small]
+    Patches --> ResNet[ResNet50]
 
-    Patches --> DINO
-    Patches --> ResNet
+    DINO --> Emb[Embedding Vectors]
+    ResNet --> Emb
 
-    DINO -->|Embeddings| PKL["📦 Pickle Files\n(embeddings + labels)"]
-    ResNet -->|Embeddings| PKL
+    Emb --> MLP
+    Emb --> LSTM
+    Emb --> TF[Transformer]
+    Emb --> KNN[KNN + PCA]
 
-    subgraph Downstream Classification
-        MLP["⚙️ MLP"]
-        LSTM_model["⚙️ LSTM"]
-        TF["⚙️ Transformer"]
-        KNN["⚙️ KNN + PCA"]
-    end
-
-    PKL --> MLP
-    PKL --> LSTM_model
-    PKL --> TF
-    PKL --> KNN
-
-    subgraph Evaluation & Visualization
-        Metrics["📊 Metrics\n(Accuracy, F1, AUC, etc.)"]
-        UMAP["📈 UMAP Plots"]
-        Attention["🔍 Attention Maps"]
-    end
-
-    MLP --> Metrics
-    LSTM_model --> Metrics
-    TF --> Metrics
-    KNN --> Metrics
-    DINO --> Attention
-    PKL --> UMAP
+    MLP --> Eval[Metrics + Visualization]
+    LSTM --> Eval
+    TF --> Eval
+    KNN --> Eval
+    DINO --> Attn[Attention Maps]
+    Emb --> UMAP[UMAP Projections]
 ```
 
-The pipeline follows a modular, multi-stage approach:
-
-1. **Patch Extraction** — WSI images are divided into fixed-size patches
-2. **Annotation Processing** — XML annotations are converted to GeoJSON format and used to label patches as tumoral/non-tumoral
-3. **Feature Extraction** — Pre-trained DINO (Vision Transformer) and ResNet50 models generate embedding vectors for each patch
-4. **Classification** — Downstream classifiers (MLP, LSTM, Transformer, KNN) are trained on the embeddings for binary tumor detection
-5. **Evaluation** — Quantitative metrics and qualitative visualizations (UMAP, attention maps) assess model performance
+The design separates feature extraction from classification, allowing each stage to be developed and evaluated independently. DINO's self-supervised pretraining removes the dependency on large labeled datasets — a practical advantage in medical imaging where expert annotation is expensive. The multi-classifier benchmark then reveals which downstream architecture best exploits the learned representations, rather than committing to a single model choice upfront. Cosine annealing learning rate scheduling and Kaiming weight initialization are used across the supervised models to stabilize training on the relatively compact embedding space.
 
 ## Tech Stack
 
-| Category | Technology |
-|----------|-----------|
-| Language | Python |
-| Deep Learning | PyTorch |
+| Category | Technologies |
+|----------|-------------|
+| Deep Learning | PyTorch, torchvision |
 | Self-Supervised Learning | DINO (Facebook Research) |
-| Feature Extractors | Vision Transformer (ViT), ResNet50 |
-| Classical ML | scikit-learn (KNN, PCA, metrics) |
-| Image Processing | OpenCV, scikit-image, PIL |
+| Feature Extractors | Vision Transformer (ViT-Small), ResNet50 |
+| Classical ML | scikit-learn (KNN, PCA, RandomizedSearchCV) |
+| Image Processing | OpenCV, scikit-image, Pillow |
 | Visualization | matplotlib, seaborn, UMAP |
-| Data Format | Pickle (.pkl), GeoJSON |
+| Data Handling | NumPy, pandas, pickle |
 | Logging | Python logging, coloredlogs |
-| Notebooks | Jupyter |
 
 ## Project Structure
 
 ```
-mla-prj-23-superawesometeamname/
-├── images/                        # Logo and screenshots
 ├── src/
 │   ├── models/
-│   │   ├── vision_transformer.py  # ViT architecture (DINO backbone)
-│   │   └── embeddings_classification.py  # MLP, LSTM, Transformer classifiers
+│   │   ├── vision_transformer.py          # ViT architecture (DINO backbone)
+│   │   └── embeddings_classification.py   # MLP, LSTM, Transformer classifiers
 │   ├── utils/
-│   │   └── loaders.py             # DatasetEmbeddings loader from pickle
-│   ├── main_dino.py               # DINO self-supervised training script
-│   ├── train_classifier.py        # Downstream classifier training script
-│   ├── classification_task.py     # KNN classification with PCA
-│   ├── utils.py                   # DINO utilities (distributed training, schedulers, etc.)
-│   ├── attention_visualization_utils.py  # Attention map visualization tools
-│   ├── _patch_extraction.ipynb          # WSI patch extraction
-│   ├── _xml_to_geojson_conversion.ipynb # Annotation format conversion
-│   ├── _create_embeddings.ipynb         # Generate embeddings from patches
-│   ├── _classification_task.ipynb       # KNN classification experiments
-│   ├── _classification_embeddings.ipynb # Embeddings-based classification
-│   ├── _classification_crc.ipynb        # CRC dataset classification
-│   ├── _resnet_50.ipynb                 # ResNet50 feature extraction
-│   ├── _umap_visualization.ipynb        # UMAP embedding visualization
-│   ├── _attention_visualization_256.ipynb # DINO attention maps
-│   ├── _qualitative_eval_dino.ipynb     # Qualitative eval (DINO)
-│   ├── _qualitative_eval_resnet50.ipynb # Qualitative eval (ResNet50)
-│   ├── ckpts/                     # Model checkpoints (MLP, LSTM, Transformer)
-│   ├── classification_results/    # Classification result plots
-│   ├── UMAPs/                     # UMAP visualization images
-│   ├── attention_visualization_results/ # Attention map outputs
-│   ├── data/                      # Dataset directory (not tracked)
-│   └── image_demo/                # Demo patch images
+│   │   └── loaders.py                     # DatasetEmbeddings loader from pickle
+│   ├── main_dino.py                       # DINO self-supervised training entry point
+│   ├── train_classifier.py               # Downstream classifier training script
+│   ├── classification_task.py            # KNN classification with PCA + hyperparameter search
+│   ├── utils.py                          # DINO training utilities (distributed, schedulers)
+│   ├── attention_visualization_utils.py  # Self-attention heatmap generation
+│   ├── _patch_extraction.ipynb           # WSI → fixed-size patch extraction
+│   ├── _xml_to_geojson_conversion.ipynb  # Annotation format conversion
+│   ├── _create_embeddings.ipynb          # Feature extraction (DINO / ResNet50)
+│   ├── _classification_embeddings.ipynb  # Supervised classifier training
+│   ├── _classification_task.ipynb        # KNN classification experiments
+│   ├── _classification_crc.ipynb         # Transfer learning on CRC-100K dataset
+│   ├── _umap_visualization.ipynb         # Embedding space visualization
+│   ├── _attention_visualization_256.ipynb # DINO attention map generation
+│   ├── _qualitative_eval_dino.ipynb      # Qualitative evaluation (DINO)
+│   ├── _qualitative_eval_resnet50.ipynb  # Qualitative evaluation (ResNet50)
+│   ├── _resnet_50.ipynb                  # ResNet50 feature extraction
+│   ├── ckpts/                            # Saved model checkpoints (MLP, LSTM, Transformer)
+│   ├── classification_results/           # Classification performance plots
+│   ├── UMAPs/                            # UMAP embedding visualizations
+│   └── image_demo/                       # Sample histopathological patches
 ├── .gitignore
+├── LICENSE                               # BSD 3-Clause License
 └── README.md
 ```
+
+## Results
+
+<!-- TODO: verify — no metric outputs are saved in the notebook cells. The values below should be verified by the author against actual training logs or notebook outputs. -->
+
+The pipeline evaluates four downstream classifiers on DINO and ResNet50 embeddings, reporting accuracy, precision, recall, F1 score, ROC AUC, and specificity. Checkpoints are saved every 10 epochs with full metric snapshots for both train and test sets.
+
+Classification result plots are available in `src/classification_results/` comparing DINO vs. ResNet50 embeddings on both the balanced and imbalanced dataset configurations. UMAP visualizations in `src/UMAPs/` show the embedding space structure for each feature extractor, with separate plots for the original WSI dataset and the CRC-100K transfer learning experiment.
 
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.8+
-- CUDA-compatible GPU (recommended) or Apple Silicon (MPS supported)
+- CUDA-compatible GPU recommended (MPS/Apple Silicon also supported)
 
 ### Installation
 
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd mla-prj-23-superawesometeamname
-   ```
+```bash
+git clone https://github.com/username/WSI_analysis.git
+cd WSI_analysis
 
-2. Install dependencies:
-   ```bash
-   pip install torch torchvision numpy scikit-learn scikit-image matplotlib seaborn opencv-python umap-learn coloredlogs pillow tqdm
-   ```
+pip install torch torchvision numpy scikit-learn scikit-image \
+    matplotlib seaborn opencv-python umap-learn coloredlogs \
+    pillow tqdm pandas
+```
 
-3. Place your WSI data and annotation files in `src/data/`.
+### Usage
 
-### Running
+**1. Patch Extraction** — Run `src/_patch_extraction.ipynb` to extract fixed-size patches from WSI images.
 
-#### 1. Patch Extraction
-Run the `src/_patch_extraction.ipynb` notebook to extract patches from WSI images.
+**2. Annotation Processing** — Run `src/_xml_to_geojson_conversion.ipynb` to convert XML annotations to GeoJSON format.
 
-#### 2. DINO Self-Supervised Training
+**3. DINO Self-Supervised Training**
+
 ```bash
 python src/main_dino.py --arch vit_small --data_path /path/to/patches --epochs 10 --batch_size_per_gpu 64
 ```
 
-#### 3. Generate Embeddings
-Run `src/_create_embeddings.ipynb` to extract embeddings from patches using the trained DINO model or a pre-trained ResNet50.
+**4. Generate Embeddings** — Run `src/_create_embeddings.ipynb` to extract embedding vectors using the trained DINO model or a pretrained ResNet50.
 
-#### 4. Train Downstream Classifiers
+**5. Train Downstream Classifiers**
+
 ```bash
-python src/train_classifier.py --model MLP --data_path /path/to/embeddings.pkl --epochs 50 --batch_size 32
+python src/train_classifier.py --model MLP --data_path ./src/data/embeddings/dino.pkl --epochs 50 --batch_size 32
 ```
 
 Available models: `MLP`, `LSTM`, `Transformer`
 
-#### 5. KNN Classification
+**6. KNN Classification**
+
 ```python
-from classification_task import run_classification_task
-run_classification_task("/path/to/embeddings.pkl")
+from src.classification_task import run_classification_task
+run_classification_task("./src/data/embeddings/dino.pkl")
 ```
 
-### Evaluation
+**7. Visualization** — Run `_umap_visualization.ipynb` for embedding space plots and `_attention_visualization_256.ipynb` for DINO self-attention heatmaps.
 
-The training script automatically logs metrics every 10 epochs:
-- **Accuracy**, **Precision**, **Recall**, **F1 Score**
-- **ROC AUC**, **Specificity**
-- **Confusion Matrix** (FP, FN counts)
 
-Visualization notebooks generate:
-- **UMAP plots** — embedding space visualization for different models
-- **Attention maps** — DINO self-attention heatmaps overlaid on patches
-- **Confusion matrices** — classification performance heatmaps
-
-## Models
-
-| Model | Type | Input | Description |
-|-------|------|-------|-------------|
-| DINO ViT | Self-Supervised | Raw patches (256x256) | Feature extractor using self-distillation |
-| ResNet50 | Pre-trained | Raw patches | CNN-based feature extractor |
-| MLP | Supervised | Embeddings | 2-layer feedforward classifier |
-| LSTM | Supervised | Embeddings | Recurrent classifier with hidden state |
-| Transformer | Supervised | Embeddings | Attention-based classifier |
-| KNN + PCA | Classical ML | Embeddings | K-Nearest Neighbors with PCA (99% variance) |
-
-## License
-
-Distributed under the MIT License.
